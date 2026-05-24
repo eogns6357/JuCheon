@@ -1,6 +1,8 @@
 import requests
 import config
 
+APP_URL = "https://jucheon.streamlit.app/"
+
 def send(message: str) -> bool:
     if not config.TELEGRAM_TOKEN or not config.TELEGRAM_CHAT_ID:
         return False
@@ -29,7 +31,7 @@ def alert_stock(stock: dict):
         f"거래량: {stock['거래량비율']}배  RSI: {stock['RSI']}\n"
         f"신호점수: {stock['점수']}/100\n"
         f"━━━━━━━━━━━━━━━\n"
-        f"✅ 대시보드에서 확인 후 직접 주문하세요"
+        f"✅ <a href='{APP_URL}'>대시보드에서 확인</a> 후 직접 주문하세요"
     )
     return send(msg)
 
@@ -40,7 +42,8 @@ def alert_market_open(kospi: float, kosdaq: float, regime: str):
         f"코스피: {kospi:,.0f}  |  코스닥: {kosdaq:,.0f}\n"
         f"시장 국면: {regime}\n"
         f"━━━━━━━━━━━━━━━\n"
-        f"스크리닝을 시작합니다"
+        f"스크리닝을 시작합니다\n"
+        f"🔗 <a href='{APP_URL}'>대시보드 열기</a>"
     )
     return send(msg)
 
@@ -50,7 +53,8 @@ def alert_market_close(found: int, total_checked: int):
         f"━━━━━━━━━━━━━━━\n"
         f"오늘 스캔: {total_checked}종목\n"
         f"신호 발생: {found}건\n"
-        f"수고하셨습니다 🙌"
+        f"수고하셨습니다 🙌\n"
+        f"🔗 <a href='{APP_URL}'>대시보드 열기</a>"
     )
     return send(msg)
 

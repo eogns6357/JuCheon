@@ -2,6 +2,8 @@
 
 한국 주식 단기 매매를 위한 개인용 분석 대시보드
 
+**🚀 [https://jucheon.streamlit.app](https://jucheon.streamlit.app)**
+
 <br>
 
 ## 주요 기능
