@@ -1,0 +1,11 @@
+pykrx
+finance-datareader
+pandas
+numpy
+streamlit
+plotly
+requests
+beautifulsoup4
+schedule
+websocket-client
+google-generativeai
