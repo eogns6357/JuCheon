@@ -1,5 +1,5 @@
 # 환경변수 / API 키 (절대 커밋 금지)
-config.py
+local_config.py
 
 # Python
 __pycache__/
