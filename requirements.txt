@@ -9,3 +9,4 @@ beautifulsoup4
 schedule
 websocket-client
 google-generativeai
+qrcode[pil]

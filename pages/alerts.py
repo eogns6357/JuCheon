@@ -1,6 +1,6 @@
 import streamlit as st
-import os, sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import requests
+import io
 
 from core.styles import inject
 inject(st)
@@ -8,131 +8,132 @@ inject(st)
 st.markdown("""
 <div style='margin-bottom:1.25rem'>
   <div style='font-size:.8125rem;font-weight:500;color:#7b7b7b;margin-bottom:.2rem'>NOTIFICATIONS</div>
-  <div style='font-size:1.375rem;font-weight:700;color:#191919;letter-spacing:-.01em'>텔레그램 알림 설정</div>
+  <div style='font-size:1.375rem;font-weight:700;color:#191919;letter-spacing:-.01em'>알림 설정</div>
 </div>
 """, unsafe_allow_html=True)
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.py")
+import config
 
-def read_config() -> dict:
-    ns = {}
-    with open(CONFIG_PATH, encoding="utf-8") as f:
-        exec(f.read(), ns)
-    return ns
+# ── QR 코드 생성 ──────────────────────────────────────
+@st.cache_data(ttl=3600)
+def get_bot_info(token: str):
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
+        data = r.json()
+        if data.get("ok"):
+            return data["result"].get("username")
+    except:
+        pass
+    return None
 
-def write_config_value(key: str, value: str):
-    with open(CONFIG_PATH, encoding="utf-8") as f:
-        lines = f.readlines()
-    new_lines = []
-    for line in lines:
-        if line.strip().startswith(f"{key} =") or line.strip().startswith(f"{key}="):
-            new_lines.append(f'{key} = "{value}"\n')
-        else:
-            new_lines.append(line)
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
+def make_qr(url: str):
+    import qrcode
+    from PIL import Image
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=8,
+        border=3,
+    )
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="#191919", back_color="#ffffff")
 
-cfg = read_config()
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
 
-# ── STEP 1: 봇 토큰 ───────────────────────────────────
-st.markdown("## 1단계 — 텔레그램 봇 만들기")
-with st.expander("방법 보기", expanded=not bool(cfg.get("TELEGRAM_TOKEN"))):
-    st.markdown("""
-1. 텔레그램 앱에서 **@BotFather** 검색 → 대화 시작
-2. `/newbot` 입력
-3. 봇 이름 입력 (예: `내주식알림봇`)
-4. 봇 아이디 입력 (예: `my_stock_alert_bot`) — 반드시 `bot`으로 끝나야 함
-5. **HTTP API Token** 발급됨 → 아래에 붙여넣기
-    """)
+# ── 메인 UI ───────────────────────────────────────────
+if not config.TELEGRAM_TOKEN:
+    st.info("텔레그램 알림이 아직 설정되지 않았습니다.")
+    st.stop()
 
-token = st.text_input("봇 토큰", value=cfg.get("TELEGRAM_TOKEN", ""),
-                       placeholder="1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ",
-                       type="password")
-if st.button("토큰 저장"):
-    write_config_value("TELEGRAM_TOKEN", token)
-    st.success("저장됨 — 페이지 새로고침 후 2단계 진행")
-    st.rerun()
+bot_username = get_bot_info(config.TELEGRAM_TOKEN)
 
-# ── STEP 2: Chat ID 조회 ─────────────────────────────
-if cfg.get("TELEGRAM_TOKEN"):
-    st.markdown("## 2단계 — Chat ID 확인")
-    with st.expander("방법 보기", expanded=not bool(cfg.get("TELEGRAM_CHAT_ID"))):
+if bot_username:
+    bot_url = f"https://t.me/{bot_username}"
+
+    col_qr, col_desc = st.columns([1, 2])
+
+    with col_qr:
         st.markdown("""
-1. 텔레그램에서 방금 만든 봇을 검색해서 열기
-2. **아무 메시지나** 하나 보내기 (예: `안녕`)
-3. 아래 버튼 클릭 → Chat ID 자동 조회
-        """)
+<div style='background:#ffffff;border-radius:14px;padding:1.5rem;
+            box-shadow:0 1px 4px rgba(0,0,0,.07);text-align:center'>
+""", unsafe_allow_html=True)
+        qr_buf = make_qr(bot_url)
+        st.image(qr_buf, width=200)
+        st.markdown(f"""
+  <div style='font-size:.75rem;color:#b0b0b8;margin-top:.5rem'>
+    @{bot_username}
+  </div>
+</div>""", unsafe_allow_html=True)
 
-    if st.button("🔍 Chat ID 자동 조회"):
-        import requests
-        try:
-            r = requests.get(
-                f"https://api.telegram.org/bot{cfg['TELEGRAM_TOKEN']}/getUpdates",
-                timeout=10
-            )
-            updates = r.json().get("result", [])
-            if updates:
-                chat_id = str(updates[-1]["message"]["chat"]["id"])
-                write_config_value("TELEGRAM_CHAT_ID", chat_id)
-                st.success(f"Chat ID 저장: `{chat_id}`")
-                st.rerun()
-            else:
-                st.warning("메시지를 받지 못했습니다. 봇에게 먼저 메시지를 보내주세요.")
-        except Exception as e:
-            st.error(f"오류: {e}")
+    with col_desc:
+        st.markdown(f"""
+<div style='background:#ffffff;border-radius:14px;padding:1.75rem;
+            box-shadow:0 1px 4px rgba(0,0,0,.07);height:100%'>
+  <div style='font-size:1.125rem;font-weight:700;color:#191919;margin-bottom:1rem'>
+    매매 신호 알림 받기
+  </div>
+  <div style='display:flex;flex-direction:column;gap:.875rem'>
+    <div style='display:flex;align-items:flex-start;gap:.75rem'>
+      <span style='background:#f0f5ff;color:#3182f6;font-size:.875rem;font-weight:700;
+                   padding:.3rem .7rem;border-radius:20px;white-space:nowrap'>1</span>
+      <div style='font-size:.9375rem;color:#191919;line-height:1.5'>
+        QR코드를 스캔하거나<br>
+        <b style='color:#3182f6'>@{bot_username}</b> 을 텔레그램에서 검색
+      </div>
+    </div>
+    <div style='display:flex;align-items:flex-start;gap:.75rem'>
+      <span style='background:#f0f5ff;color:#3182f6;font-size:.875rem;font-weight:700;
+                   padding:.3rem .7rem;border-radius:20px;white-space:nowrap'>2</span>
+      <div style='font-size:.9375rem;color:#191919;line-height:1.5'>
+        봇과 대화를 시작
+      </div>
+    </div>
+    <div style='display:flex;align-items:flex-start;gap:.75rem'>
+      <span style='background:#f0f5ff;color:#3182f6;font-size:.875rem;font-weight:700;
+                   padding:.3rem .7rem;border-radius:20px;white-space:nowrap'>3</span>
+      <div style='font-size:.9375rem;color:#191919;line-height:1.5'>
+        매매 신호 발생 시 자동으로 알림이 전송됩니다
+      </div>
+    </div>
+  </div>
+  <div style='margin-top:1.25rem;padding:.875rem 1rem;background:#f8f8f8;
+              border-radius:10px;font-size:.8125rem;color:#7b7b7b;line-height:1.6'>
+    신호점수 65점 이상 종목만 알림 · 당일 중복 알림 없음<br>
+    장 시간(09:10 ~ 15:20)에만 작동
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
-    if cfg.get("TELEGRAM_CHAT_ID"):
-        st.info(f"현재 Chat ID: `{cfg['TELEGRAM_CHAT_ID']}`")
+else:
+    st.warning("봇 정보를 불러올 수 없습니다.")
 
-# ── STEP 3: 테스트 ───────────────────────────────────
-if cfg.get("TELEGRAM_TOKEN") and cfg.get("TELEGRAM_CHAT_ID"):
-    st.markdown("## 3단계 — 연결 테스트")
-    if st.button("📨 테스트 메시지 전송", type="primary"):
-        import importlib, config as cfg_mod
-        importlib.reload(cfg_mod)
-        from core.telegram import test_message
-        ok = test_message()
-        if ok:
-            st.success("✅ 텔레그램으로 메시지 전송 성공!")
-        else:
-            st.error("❌ 전송 실패 — 토큰과 Chat ID를 다시 확인해주세요")
-
-    # ── STEP 4: 스케줄러 ──────────────────────────────
-    st.markdown("---")
-    st.markdown("## 4단계 — 자동 스크리닝 알림 설정")
-
+# ── 스케줄러 (관리자 전용) ────────────────────────────
+with st.expander("스케줄러 설정", expanded=False):
     from core import scheduler
+
     col1, col2, col3 = st.columns(3)
     with col1:
         interval = st.selectbox("스크리닝 주기", [10, 20, 30, 60], index=2,
-                                 format_func=lambda x: f"{x}분마다")
+                                format_func=lambda x: f"{x}분마다")
     with col2:
         market = st.selectbox("시장", ["ALL", "KOSPI", "KOSDAQ"])
     with col3:
         max_s = st.slider("스캔 종목 수", 50, 300, 150, 50)
 
     running = scheduler.is_running()
-    stats = scheduler.get_stats()
+    stats   = scheduler.get_stats()
 
     if running:
-        st.success(f"🟢 스케줄러 실행 중 | 오늘 스캔: {stats['checked']}종목 | 알림: {stats['found']}건")
-        if st.button("⏹ 스케줄러 중지", use_container_width=True):
+        st.success(f"🟢 실행 중  |  오늘 스캔: {stats['checked']}종목  |  알림: {stats['found']}건")
+        if st.button("⏹ 중지", use_container_width=True):
             scheduler.stop()
             st.rerun()
     else:
-        st.info("⚪ 스케줄러 꺼져 있음")
-        if st.button("▶ 스케줄러 시작", type="primary", use_container_width=True):
-            msg = scheduler.start(interval_min=interval, market=market, max_stocks=max_s)
-            st.success(msg)
+        st.info("⚪ 꺼져 있음")
+        if st.button("▶ 시작", type="primary", use_container_width=True):
+            st.success(scheduler.start(interval_min=interval, market=market, max_stocks=max_s))
             st.rerun()
-
-    st.markdown("""
-    **알림 기준**
-    - 신호점수 65점 이상 종목만 알림
-    - 당일 한 번 알린 종목은 재알림 없음
-    - 장 시간(09:10~15:20)에만 작동
-    - 09:05 시장 브리핑 / 15:30 마감 요약 자동 발송
-    """)
-
-else:
-    st.info("1단계부터 순서대로 진행해주세요.")
