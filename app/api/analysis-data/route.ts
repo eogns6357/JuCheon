@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kisGet } from "@/lib/kis";
+
+export const maxDuration = 60;
 import { calcIndicators, signalScore, type OHLCV } from "@/lib/indicators";
 import { formatDate, kisDateToISO } from "@/lib/stocks";
 

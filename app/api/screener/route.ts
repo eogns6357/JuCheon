@@ -3,6 +3,8 @@ import { kisGet } from "@/lib/kis";
 import { calcIndicators, signalScore, calcInvestorBonus, type OHLCV } from "@/lib/indicators";
 import { formatDate, kisDateToISO } from "@/lib/stocks";
 
+export const maxDuration = 60;
+
 // 거래대금 최소 기준: 10억 원/일 (유동성 미달 종목 제외)
 const MIN_TRADE_VALUE = 1_000_000_000;
 
