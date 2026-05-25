@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { spawn } from "child_process";
-import path from "path";
 import { kisGet } from "@/lib/kis";
 import { calcIndicators, signalScore, type OHLCV } from "@/lib/indicators";
 import { formatDate, kisDateToISO } from "@/lib/stocks";
@@ -9,35 +7,7 @@ import { formatDate, kisDateToISO } from "@/lib/stocks";
 const _cache = new Map<string, { ohlcv: OHLCV[]; ts: number }>();
 const CACHE_TTL = 15 * 60 * 1000;
 
-// ── FDR via Python (primary, full 10-year history) ────────────────────────────
-function fetchViaFDR(ticker: string): Promise<OHLCV[]> {
-  return new Promise((resolve, reject) => {
-    const python = process.env.PYTHON_PATH ?? "python";
-    const script = path.join(process.cwd(), "scripts", "get_chart.py");
-
-    const child = spawn(python, [script, ticker, "D"], {
-      env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
-    });
-
-    let out = "", err = "";
-    child.stdout.on("data", (d: Buffer) => { out += d.toString(); });
-    child.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-
-    const timer = setTimeout(() => { child.kill(); reject(new Error("FDR timeout")); }, 30_000);
-
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (code !== 0) { reject(new Error(err || "FDR failed")); return; }
-      try {
-        const candles = JSON.parse(out) as { time: string; open: number; high: number; low: number; close: number; volume: number }[];
-        resolve(candles.map((c) => ({ date: c.time, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume })));
-      } catch (e) { reject(e); }
-    });
-    child.on("error", (e) => { clearTimeout(timer); reject(e); });
-  });
-}
-
-// ── KIS pagination fallback ───────────────────────────────────────────────────
+// ── KIS pagination ────────────────────────────────────────────────────────────
 async function fetchPaged(ticker: string): Promise<OHLCV[]> {
   const maxPages = 20;
   const farStart = new Date();
@@ -108,11 +78,7 @@ export async function GET(req: NextRequest) {
     if (hit && Date.now() - hit.ts < CACHE_TTL) {
       ohlcv = hit.ohlcv;
     } else {
-      try {
-        ohlcv = await fetchViaFDR(ticker);
-      } catch {
-        ohlcv = await fetchPaged(ticker);
-      }
+      ohlcv = await fetchPaged(ticker);
       if (ohlcv.length < 30) {
         return NextResponse.json({ error: "데이터 부족" }, { status: 400 });
       }

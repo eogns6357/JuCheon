@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { spawn } from "child_process";
-import path from "path";
 import { kisGet } from "@/lib/kis";
 import { kisDateToISO, formatDate } from "@/lib/stocks";
 
@@ -44,33 +42,7 @@ function aggregateMinutes(candles: Candle[], intervalMin: number): Candle[] {
   return [...map.values()].sort((a, b) => (a.time as number) - (b.time as number));
 }
 
-// ── FinanceDataReader (primary, full history) ─────────────────────────────────
-function fetchViaFDR(ticker: string, period: string): Promise<Candle[]> {
-  return new Promise((resolve, reject) => {
-    const python = process.env.PYTHON_PATH ?? "python";
-    const script = path.join(process.cwd(), "scripts", "get_chart.py");
-
-    const child = spawn(python, [script, ticker, period], {
-      env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
-    });
-
-    let out = "", err = "";
-    child.stdout.on("data", (d: Buffer) => { out += d.toString(); });
-    child.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-
-    const timer = setTimeout(() => { child.kill(); reject(new Error("FDR timeout")); }, 30_000);
-
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (code !== 0) { reject(new Error(err || "FDR failed")); return; }
-      try { resolve(JSON.parse(out) as Candle[]); }
-      catch (e) { reject(e); }
-    });
-    child.on("error", (e) => { clearTimeout(timer); reject(e); });
-  });
-}
-
-// ── KIS pagination fallback (in case FDR/Python unavailable) ─────────────────
+// ── KIS pagination ────────────────────────────────────────────────────────────
 async function fetchPaged(ticker: string, periodCode: string): Promise<Candle[]> {
   const maxPages = 20;
   const farStart = new Date();
@@ -199,13 +171,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ ticker, candles: hit.candles, period });
       }
 
-      let candles: Candle[];
-      try {
-        candles = await fetchViaFDR(ticker, periodCode);
-      } catch {
-        // Python / FDR unavailable — fall back to KIS pagination
-        candles = await fetchPaged(ticker, periodCode);
-      }
+      const candles = await fetchPaged(ticker, periodCode);
 
       _cache.set(key, { candles, ts: Date.now() });
       return NextResponse.json({ ticker, candles, period });
