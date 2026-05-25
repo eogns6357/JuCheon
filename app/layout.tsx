@@ -4,7 +4,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { DisclaimerModal } from "@/components/disclaimer-modal";
 
 export const metadata: Metadata = {
-  title: "개인 트레이더",
+  title: "JUCHEON",
   description: "한국 주식 단기 매매 대시보드",
 };
 
