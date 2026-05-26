@@ -239,7 +239,7 @@ export async function GET() {
     const result = await fetchMoodLive(
       snapshot ? { gainers: snapshot.gainers, losers: snapshot.losers } : undefined
     );
-    await saveMoodSnapshot(result);
+    try { await saveMoodSnapshot(result); } catch { /* Vercel read-only filesystem */ }
     _cache.set("mood", { data: result, ts: Date.now() });
     return NextResponse.json(result);
   } catch (e) {
