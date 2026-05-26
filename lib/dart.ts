@@ -31,6 +31,7 @@ async function dartList(
   const qs = new URLSearchParams({ crtfc_key: key, page_count: "30", ...params });
   const res = await fetch(`https://opendart.fss.or.kr/api/list.json?${qs}`, {
     next: { revalidate: 300 },
+    signal: AbortSignal.timeout(8000),
   });
   const data = await res.json();
 

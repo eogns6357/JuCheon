@@ -4,6 +4,9 @@ import { POPULAR_STOCKS } from "@/lib/stocks";
 
 interface Ticker { ticker: string; name: string; }
 
+// 마지막으로 성공한 KIS 응답 캐시 (장 마감 후 재사용)
+let _lastKnown: Ticker[] = [];
+
 async function fetchTopByValue(market: "J" | "Q", count: number): Promise<Ticker[]> {
   try {
     const data = await kisGet(
@@ -60,8 +63,12 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 장 마감 등 KIS 데이터 없을 때 POPULAR_STOCKS로 폴백
-  if (tickers.length === 0) {
+  if (tickers.length > 0) {
+    _lastKnown = tickers;
+  } else if (_lastKnown.length > 0) {
+    const cached = _lastKnown.slice(0, count);
+    return NextResponse.json({ tickers: cached, total: cached.length });
+  } else {
     const fallback = POPULAR_STOCKS
       .map((s) => ({ ticker: s.ticker, name: s.name }))
       .slice(0, count);

@@ -45,6 +45,7 @@ export async function fetchNaverStockNews(
         "User-Agent": "Mozilla/5.0 (compatible; PersonalTrader/1.0)",
         Accept: "application/json",
       },
+      signal: AbortSignal.timeout(8000),
       next: { revalidate: 60 },
     }
   );
