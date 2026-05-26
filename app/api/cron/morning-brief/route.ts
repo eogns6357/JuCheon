@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kisGet } from "@/lib/kis";
-import { formatDate } from "@/lib/stocks";
+import { formatDate, kisDateToISO } from "@/lib/stocks";
 import { resolveGeminiModels, isRetryableGeminiError } from "@/lib/gemini-models";
+import { calcIndicators, type OHLCV } from "@/lib/indicators";
+
+export const maxDuration = 60;
 
 // ── 보안: Vercel Cron은 Authorization: Bearer {CRON_SECRET} 헤더를 붙임 ──────
 function isAuthorized(req: NextRequest) {
@@ -211,6 +214,98 @@ async function fetchKisTopStocks(): Promise<{ gainers: KisStock[]; volume: KisSt
   }
 }
 
+// ── 기술적 선취매 후보 ─────────────────────────────────────────────────────────
+interface TechnicalPick {
+  name: string;
+  ticker: string;
+  close: number;
+  rsi: number;
+  volRatio: number;
+  ret1d: number;
+  setup: string; // 감지된 시그널 요약
+}
+
+async function fetchOHLCV(ticker: string): Promise<OHLCV[]> {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - 50);
+  const data = await kisGet(
+    "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+    {
+      FID_COND_MRKT_DIV_CODE: "J",
+      FID_INPUT_ISCD: ticker,
+      FID_INPUT_DATE_1: formatDate(start),
+      FID_INPUT_DATE_2: formatDate(end),
+      FID_PERIOD_DIV_CODE: "D",
+      FID_ORG_ADJ_PRC: "0",
+    },
+    "FHKST03010100"
+  );
+  return ((data.output2 ?? []) as Record<string, string>[])
+    .filter((r) => r.stck_bsop_date && parseInt(r.acml_vol) > 0)
+    .reverse()
+    .map((r) => ({
+      date: kisDateToISO(r.stck_bsop_date),
+      open:   parseInt(r.stck_oprc, 10),
+      high:   parseInt(r.stck_hgpr, 10),
+      low:    parseInt(r.stck_lwpr, 10),
+      close:  parseInt(r.stck_clpr, 10),
+      volume: parseInt(r.acml_vol,  10),
+    }));
+}
+
+async function fetchTechnicalPicks(stocks: KisStock[]): Promise<TechnicalPick[]> {
+  const results = await Promise.allSettled(
+    stocks.slice(0, 15).map(async (stock) => {
+      const ohlcv = await fetchOHLCV(stock.ticker);
+      if (ohlcv.length < 26) return null;
+
+      const withInd = calcIndicators(ohlcv);
+      const last = withInd[withInd.length - 1];
+      const prev = withInd[withInd.length - 2];
+      if (!last || !prev) return null;
+
+      const rsi     = last.rsi ?? 50;
+      const ma5     = last.ma5 ?? last.close;
+      const ma20    = last.ma20 ?? last.close;
+      const prevMa5 = prev.ma5 ?? ma5;
+      const prevMa20= prev.ma20 ?? ma20;
+      const avgVol  = ohlcv.slice(-21, -1).reduce((s, r) => s + r.volume, 0) / 20;
+      const volRatio= avgVol > 0 ? last.volume / avgVol : 1;
+      const ret1d   = prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
+
+      const signals: string[] = [];
+      if (last.close > ma20)                      signals.push("MA20 위");
+      if (ma5 > ma20 && prevMa5 <= prevMa20)       signals.push("골든크로스 발생");
+      if (rsi >= 40 && rsi <= 65)                  signals.push(`RSI ${rsi.toFixed(0)}`);
+      if (volRatio >= 1.5)                         signals.push(`거래량 ${volRatio.toFixed(1)}배`);
+      if (last.macd && last.macd.histogram > 0)    signals.push("MACD 양전환");
+      if (last.macd && last.macd.MACD > last.macd.signal &&
+          prev.macd && prev.macd.MACD <= prev.macd.signal) signals.push("MACD 크로스");
+      const high20 = Math.max(...ohlcv.slice(-20).map((r) => r.close));
+      const pullback = ((last.close - high20) / high20) * 100;
+      if (pullback > -12 && pullback < -3 && last.close > (last.ma60 ?? 0)) signals.push("눌림목");
+
+      if (signals.length < 2) return null;
+
+      return {
+        name: stock.name,
+        ticker: stock.ticker,
+        close: last.close,
+        rsi,
+        volRatio,
+        ret1d,
+        setup: signals.join(" · "),
+      } satisfies TechnicalPick;
+    })
+  );
+
+  return results
+    .filter((r): r is PromiseFulfilledResult<TechnicalPick> => r.status === "fulfilled" && r.value !== null)
+    .map((r) => r.value)
+    .slice(0, 5);
+}
+
 // ── Gemini로 브리핑 생성 ──────────────────────────────────────────────────────
 async function generateBriefing(
   usMarket: USQuote[],
@@ -219,6 +314,7 @@ async function generateBriefing(
   dart: DartItem[],
   gainers: KisStock[],
   volume: KisStock[],
+  technicalPicks: TechnicalPick[],
 ): Promise<string> {
   const usLines = usMarket
     .map((q) => `${q.label}: ${q.price.toLocaleString()} (${q.changePercent >= 0 ? "+" : ""}${q.changePercent.toFixed(2)}%)`)
@@ -237,63 +333,75 @@ async function generateBriefing(
     year: "numeric", month: "long", day: "numeric", weekday: "long",
   });
 
-  const prompt = `당신은 한국 주식 단기 매매 전문 트레이더입니다.
-아래 데이터를 우선순위에 따라 분석해서 오늘 ${today} 장에서 실제로 매매에 활용할 수 있는 브리핑을 작성하세요.
+  const techLines = technicalPicks.length
+    ? technicalPicks.map((p) =>
+        `${p.name}(${p.ticker}) | 종가 ${p.close.toLocaleString()}원 | 전일 ${p.ret1d >= 0 ? "+" : ""}${p.ret1d.toFixed(1)}% | 거래량 ${p.volRatio.toFixed(1)}배 | RSI ${p.rsi.toFixed(0)} | 시그널: ${p.setup}`
+      ).join("\n")
+    : "없음";
 
-=== [1순위] 미국 시장 마감 ===
+  const prompt = `당신은 한국 주식 단기 매매 전문 트레이더입니다.
+아래 데이터를 분석해서 오늘 ${today} 장에서 실제로 매매에 활용할 수 있는 브리핑을 작성하세요.
+핵심 목표: 오늘 오르기 전에 살 수 있는 종목을 미리 짚어주는 것.
+
+=== [A] 기술적 선취매 후보 (전일 종가 기준 지표 계산 완료) ===
+${techLines}
+
+=== [B] 미국 시장 마감 ===
 ${usLines || "데이터 없음"}
 
-=== [2순위] 미국·글로벌 주요 뉴스 (밤사이) ===
+=== [C] 미국·글로벌 주요 뉴스 (밤사이) ===
 ${usNewsLines || "없음"}
 
-=== [3순위] 국내 주요 공시 (DART) ===
+=== [D] 국내 주요 공시 (DART) ===
 ${dartLines}
 
-=== [4순위] 전일 등락률 상위 / 거래대금 상위 ===
+=== [E] 전일 등락률 상위 / 거래대금 상위 ===
 등락률: ${gainerLines || "없음"}
 거래대금: ${volumeLines || "없음"}
 
-=== [5순위] 국내 주요 뉴스 ===
+=== [F] 국내 주요 뉴스 ===
 ${krNewsLines || "없음"}
 
 【출력 형식 — 반드시 이 순서대로】
 
 <b>📊 오늘 장 분위기</b>
-미국 지수 흐름 → KOSPI/KOSDAQ 출발 방향 (강세/약세/혼조) 을 두 줄로. 근거 명확히.
+미국 지수 흐름 → KOSPI/KOSDAQ 출발 방향(강세/약세/혼조) 두 줄. 근거 명확히.
+
+<b>⭐ 오늘 선취매 후보</b>
+[A] 기술적 선취매 후보 중, 오늘 9:00~9:30 시초가 부근에서 선취매할 만한 종목 1~2개를 골라주세요.
+선정 기준: MA20 위 + MACD 양전환 + 거래량 증가 + 뉴스·공시 촉매 유무 종합 판단.
+후보가 없으면 전일 거래대금 상위 중 기술적으로 가장 나은 종목을 대신 제시.
+
+형식:
+① <b>종목명</b>(종목코드) — 선택 이유 한 줄
+② 진입: 시초가/눌림 조건 | 목표: +N% | 손절: -N%
+③ 주의사항 한 줄
 
 <b>🎯 오늘 매매 아이디어</b>
-내 돈을 직접 건다는 관점으로, 오늘 실제로 매매할 만한 아이디어를 우선순위 순으로 2~3개 작성하세요.
-종목 추천은 반드시 포함. 이슈가 약해도 현재 데이터에서 가장 승산 있는 종목을 뽑아야 합니다.
+이슈·뉴스·공시 기반 아이디어 2개 (선취매 후보와 겹쳐도 무방).
 
-▶ [1] 미국 뉴스발 수혜 (9:00~9:20 선취매)
-미국 뉴스에서 국내 공급망·파트너·테마 수혜가 가장 명확한 이슈 1개 선별.
-없으면 "현재는 미국·글로벌 이슈와 관련해서 전달해드릴 내용이 없습니다." 후 [2]로 보완.
+▶ [1] 뉴스·공시 촉매 (9:00~9:20 선취매)
+[B][C][D]에서 국내 주가 직접 영향 이슈 1개. 없으면 "현재는 관련 전달 내용이 없습니다." 후 [2]로 보완.
 
-▶ [2] 공시 이벤트 (시초가 갭 플레이)
-DART 공시 중 수주·실적·M&A 등 주가 직접 영향 이슈.
-없으면 "현재는 주요 공시와 관련해서 전달해드릴 내용이 없습니다." 후 [3]로 보완.
-
-▶ [3] 모멘텀 연속 (전일 강세 종목 추적)
-전일 거래대금·등락률 상위 중 오늘 추가 상승 여력이 있는 종목.
+▶ [2] 모멘텀 연속 (전일 강세 추적)
+전일 거래대금·등락률 상위 중 오늘 추가 상승 여력 종목.
 
 각 아이디어 형식:
 ① 이슈 한 줄
-② <b>종목명</b>(종목코드) — 왜 이 종목인지 한 줄 (종목명은 반드시 <b>볼드</b>)
-③ 진입 타이밍 / 예상 목표 / 이탈 기준 한 줄 (예: "시초가 확인 후 눌림 진입, +3~5% 목표, -2% 손절")
+② <b>종목명</b>(종목코드) — 이유 한 줄
+③ 진입 타이밍 / 목표 / 손절 한 줄
 
 <b>⚡ 오늘 한 줄 전략</b>
-장 전체 방향과 오늘 내가 취할 포지션 방향 한 줄.
+장 전체 방향 + 오늘 포지션 방향 한 줄.
 
 <b>📎 참고 자료</b>
-분석에 활용한 뉴스 기사 중 핵심 2~3개.
-<a href="URL">기사 제목 (출처명)</a>
-(반드시 위에서 제공된 URL만 사용. 임의 URL 생성 금지. URL 없는 항목은 생략.)
+핵심 뉴스 기사 2~3개. <a href="URL">제목 (출처)</a>
+(제공된 URL만 사용. 임의 생성 금지. URL 없으면 생략.)
 
 【작성 규칙】
 - 텔레그램 HTML (<b>볼드</b>, <a href="...">링크</a>만 허용, 마크다운 금지)
 - 총 2000자 이내
-- 분석 본문은 확신 있게 직접적으로 작성 (모호한 표현 최소화)
-- 단, 수익 보장 표현 절대 금지. 마지막 줄에 "투자 판단은 본인 책임" 한 줄 필수`;
+- 확신 있게 직접 작성. 수익 보장 표현 금지. 마지막 줄 "투자 판단은 본인 책임" 필수`;
 
   const models = resolveGeminiModels();
   for (const model of models) {
@@ -353,8 +461,15 @@ export async function GET(req: NextRequest) {
       fetchKisTopStocks(),
     ]);
 
+    // 기술적 선취매 후보: 거래대금 상위 종목 지표 계산
+    const allStocks = [
+      ...topStocks.volume,
+      ...topStocks.gainers.filter((g) => !topStocks.volume.some((v) => v.ticker === g.ticker)),
+    ];
+    const technicalPicks = await fetchTechnicalPicks(allStocks);
+
     const briefing = await generateBriefing(
-      usMarket, usNews, krNews, dart, topStocks.gainers, topStocks.volume
+      usMarket, usNews, krNews, dart, topStocks.gainers, topStocks.volume, technicalPicks
     );
 
     const today = new Date().toLocaleDateString("ko-KR", {
