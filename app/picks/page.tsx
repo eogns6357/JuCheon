@@ -105,8 +105,13 @@ export default function PicksPage() {
 
   async function handleRefresh() {
     setRefreshing(true);
-    await mutate(undefined, { revalidate: true });
-    setRefreshing(false);
+    try {
+      const res = await fetch("/api/ai/picks?refresh=1");
+      const fresh = await res.json();
+      await mutate(fresh, false);
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   const generatedAt = data?.generatedAt
