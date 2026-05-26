@@ -158,6 +158,13 @@ export function StockSearch({ onSelect, placeholder, className }: Props) {
     }
   }
 
+  function handleSearchButton() {
+    if (!query.trim()) return;
+    setOpen(true);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    fetchSuggestions(query);
+  }
+
   function handleFocus() {
     setOpen(true);
   }
@@ -211,20 +218,30 @@ export function StockSearch({ onSelect, placeholder, className }: Props) {
 
   return (
     <div ref={containerRef} className={`relative ${className ?? "flex-1"}`}>
-      <div className="relative">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-[#b0b0b8] pointer-events-none" />
-        <Input
-          value={query}
-          onChange={(e) => handleChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onFocus={handleFocus}
-          placeholder={placeholder ?? "검색어를 입력해주세요"}
-          className="bg-white border-[#ebebeb] rounded-xl h-11 pl-10 pr-8"
-          autoComplete="off"
-        />
-        {fetching && (
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 inline-block w-4 h-4 border-2 border-[#3182f6] border-t-transparent rounded-full animate-spin" />
-        )}
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-[#b0b0b8] pointer-events-none" />
+          <Input
+            value={query}
+            onChange={(e) => handleChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onFocus={handleFocus}
+            placeholder={placeholder ?? "검색어를 입력해주세요"}
+            className="bg-white border-[#ebebeb] rounded-xl h-11 pl-10 pr-8"
+            autoComplete="off"
+          />
+          {fetching && (
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 inline-block w-4 h-4 border-2 border-[#3182f6] border-t-transparent rounded-full animate-spin" />
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={handleSearchButton}
+          disabled={!query.trim()}
+          className="shrink-0 h-11 px-4 rounded-xl bg-[#3182f6] text-white text-sm font-semibold transition-all hover:bg-[#1c6fe8] disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          검색
+        </button>
       </div>
 
       {showPanel && (
