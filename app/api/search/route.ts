@@ -3,6 +3,13 @@ import { POPULAR_STOCKS } from "@/lib/stocks";
 
 interface Ticker { ticker: string; name: string; }
 
+interface NaverACItem {
+  code: string;
+  name: string;
+  typeCode?: string;
+  nationCode?: string;
+}
+
 async function searchNaverAC(q: string): Promise<Ticker[]> {
   const res = await fetch(
     `https://ac.stock.naver.com/ac?q=${encodeURIComponent(q)}&target=stock`,
@@ -15,10 +22,10 @@ async function searchNaverAC(q: string): Promise<Ticker[]> {
     }
   );
   if (!res.ok) return [];
-  const data = await res.json() as { items?: string[][] };
+  const data = await res.json() as { items?: NaverACItem[] };
   return (data.items ?? [])
-    .map((item) => ({ name: item[0]?.trim() ?? "", ticker: item[1]?.trim() ?? "" }))
-    .filter((t) => t.ticker && t.name && /^\d{6}$/.test(t.ticker));
+    .filter((item) => item.nationCode === "KOR" && /^\d{6}$/.test(item.code))
+    .map((item) => ({ ticker: item.code.trim(), name: item.name.trim() }));
 }
 
 function searchLocal(q: string): Ticker[] {
