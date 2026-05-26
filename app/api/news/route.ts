@@ -6,12 +6,11 @@ export const maxDuration = 30;
 
 export async function GET(req: NextRequest) {
   const ticker = req.nextUrl.searchParams.get("ticker") ?? "005930";
-  const name = req.nextUrl.searchParams.get("name") ?? "";
   const dartConfigured = isDartConfigured();
 
   const [newsResult, dartResult] = await Promise.allSettled([
     fetchNaverStockNews(ticker, 20),
-    dartConfigured ? fetchDartDisclosures({ ticker, corpName: name }) : Promise.resolve([]),
+    dartConfigured ? fetchDartDisclosures({ ticker }) : Promise.resolve([]),
   ]);
 
   const items = newsResult.status === "fulfilled" ? newsResult.value : [];

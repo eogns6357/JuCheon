@@ -82,7 +82,6 @@ function dateRange(days: number) {
 
 export async function fetchDartDisclosures(opts: {
   ticker: string;
-  corpName?: string;
   days?: number;
 }): Promise<DartDisclosure[]> {
   const key = dartApiKey();
@@ -92,16 +91,8 @@ export async function fetchDartDisclosures(opts: {
   const range = dateRange(days);
   const stock = opts.ticker.replace(/\D/g, "").padStart(6, "0").slice(-6);
 
-  // Try corp_code lookup via /api/company.json (fast single call, no ZIP download)
   const corpCode = await resolveCorpCode(stock);
-  if (corpCode) {
-    const rows = await dartList({ corp_code: corpCode, ...range });
-    if (rows.length > 0) return mapRows(rows);
-  }
-
-  // Fallback: search by company name
-  const name = opts.corpName?.trim();
-  if (!name) return [];
-  const rows = await dartList({ corp_name: name, ...range });
+  if (!corpCode) return [];
+  const rows = await dartList({ corp_code: corpCode, ...range });
   return mapRows(rows);
 }
