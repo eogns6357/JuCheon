@@ -5,13 +5,19 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Home, Radio, Search, TrendingUp,
-  Calculator, BookOpen, Bell, Menu, X,
+  Calculator, BookOpen, Bell, Menu, X, Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navGroups = [
   {
     items: [{ href: "/", label: "HOME", icon: Home }],
+  },
+  {
+    label: "AI 추천",
+    items: [
+      { href: "/picks", label: "AI 종목 추천", icon: Sparkles },
+    ],
   },
   {
     label: "시세 · 분석",
