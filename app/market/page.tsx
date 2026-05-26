@@ -19,8 +19,11 @@ function IndexCard({ name, value, change, rate }: { name: string; value: number;
   );
 }
 
+interface MoodStock { ticker: string; name: string; price: number; change: number; rate: number; }
+
 export default function MarketPage() {
   const { data: idx, isLoading } = useSWR("/api/kis/indices", fetcher, { refreshInterval: 30000 });
+  const { data: mood } = useSWR("/api/market/mood", fetcher, { refreshInterval: 60000, revalidateOnFocus: false });
   const { data: scr } = useSWR("/api/screener", fetcher, { revalidateOnFocus: false });
 
   const stocks = scr?.stocks ?? [];
@@ -31,6 +34,9 @@ export default function MarketPage() {
   const avgScore = stocks.length > 0
     ? Math.round(stocks.reduce((s: number, r: { score: number }) => s + r.score, 0) / stocks.length)
     : 0;
+
+  const gainers: MoodStock[] = mood?.gainers ?? [];
+  const losers: MoodStock[]  = mood?.losers  ?? [];
 
   return (
     <div className="p-5 md:p-8 max-w-4xl mx-auto">
@@ -86,48 +92,31 @@ export default function MarketPage() {
       {/* 등락률 순위 */}
       <section>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <h2 className="text-sm font-semibold text-[#7b7b7b] mb-3">상승률 상위</h2>
-            <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-              {[...stocks]
-                .sort((a: { changeRate: number }, b: { changeRate: number }) => b.changeRate - a.changeRate)
-                .slice(0, 5)
-                .map((s: { ticker: string; name: string; close: number; changeRate: number }) => (
-                  <div key={s.ticker} className="flex items-center justify-between px-4 py-3 border-b border-[#f0f0f5] last:border-0">
-                    <div>
+          {([
+            { label: "상승률 상위", list: gainers, positive: true },
+            { label: "하락률 상위", list: losers,  positive: false },
+          ] as const).map(({ label, list, positive }) => (
+            <div key={label}>
+              <h2 className="text-sm font-semibold text-[#7b7b7b] mb-3">{label}</h2>
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                {list.length === 0 ? (
+                  <p className="text-xs text-[#b0b0b8] text-center py-6">데이터 로딩 중...</p>
+                ) : (
+                  list.slice(0, 5).map((s) => (
+                    <div key={s.ticker} className="flex items-center justify-between px-4 py-3 border-b border-[#f0f0f5] last:border-0">
                       <span className="text-sm font-semibold text-[#191919]">{s.name}</span>
+                      <div className="text-right">
+                        <p className="text-sm num font-medium">{fmt(s.price)}</p>
+                        <p className={`text-xs num font-semibold ${signColor(s.rate)}`}>
+                          {positive ? "+" : ""}{s.rate.toFixed(2)}%
+                        </p>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm num font-medium">{fmt(s.close)}</p>
-                      <p className={`text-xs num font-semibold ${signColor(s.changeRate)}`}>
-                        +{s.changeRate.toFixed(2)}%
-                      </p>
-                    </div>
-                  </div>
-                ))}
+                  ))
+                )}
+              </div>
             </div>
-          </div>
-          <div>
-            <h2 className="text-sm font-semibold text-[#7b7b7b] mb-3">하락률 상위</h2>
-            <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-              {[...stocks]
-                .sort((a: { changeRate: number }, b: { changeRate: number }) => a.changeRate - b.changeRate)
-                .slice(0, 5)
-                .map((s: { ticker: string; name: string; close: number; changeRate: number }) => (
-                  <div key={s.ticker} className="flex items-center justify-between px-4 py-3 border-b border-[#f0f0f5] last:border-0">
-                    <div>
-                      <span className="text-sm font-semibold text-[#191919]">{s.name}</span>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm num font-medium">{fmt(s.close)}</p>
-                      <p className={`text-xs num font-semibold ${signColor(s.changeRate)}`}>
-                        {s.changeRate.toFixed(2)}%
-                      </p>
-                    </div>
-                  </div>
-                ))}
-            </div>
-          </div>
+          ))}
         </div>
       </section>
     </div>
