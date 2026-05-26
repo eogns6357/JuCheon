@@ -5,7 +5,12 @@ import useSWR from "swr";
 import { fmt, signColor } from "@/lib/stocks";
 import type { PicksResponse, PickCategory, StockPick } from "@/app/api/ai/picks/route";
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+const fetcher = async (url: string) => {
+  const r = await fetch(url);
+  const json = await r.json();
+  if (!r.ok || json?.error) throw new Error(json?.error ?? `HTTP ${r.status}`);
+  return json;
+};
 
 function SkeletonCard() {
   return (
@@ -154,7 +159,7 @@ export default function PicksPage() {
 
       {error && (
         <div className="bg-white rounded-2xl p-5 shadow-sm text-center">
-          <p className="text-sm text-[#f04452]">추천 생성 중 오류가 발생했습니다.</p>
+          <p className="text-sm text-[#f04452]">{error.message || "추천 생성 중 오류가 발생했습니다."}</p>
         </div>
       )}
 

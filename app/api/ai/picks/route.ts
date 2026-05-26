@@ -120,6 +120,9 @@ export async function GET(req: NextRequest) {
     ).join("\n");
 
     const stockLines = [volLines, gainerLines, loserLines].filter(Boolean).join("\n");
+    if (!stockLines) {
+      return NextResponse.json({ error: "시장 데이터를 불러올 수 없습니다. 장중에 다시 시도해 주세요." }, { status: 503 });
+    }
 
     const categories = await generatePicks(stockLines);
     const result: PicksResponse = { categories, generatedAt: new Date().toISOString() };
