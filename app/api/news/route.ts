@@ -2,41 +2,30 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchDartDisclosures, isDartConfigured } from "@/lib/dart";
 import { fetchNaverStockNews } from "@/lib/naver-news";
 
+export const maxDuration = 30;
+
 export async function GET(req: NextRequest) {
   const ticker = req.nextUrl.searchParams.get("ticker") ?? "005930";
   const name = req.nextUrl.searchParams.get("name") ?? "";
   const dartConfigured = isDartConfigured();
 
-  try {
-    let items: Awaited<ReturnType<typeof fetchNaverStockNews>> = [];
-    let newsError: string | undefined;
-    let newsSource = "naver";
+  const [newsResult, dartResult] = await Promise.allSettled([
+    fetchNaverStockNews(ticker, 20),
+    dartConfigured ? fetchDartDisclosures({ ticker, corpName: name }) : Promise.resolve([]),
+  ]);
 
-    try {
-      items = await fetchNaverStockNews(ticker, 20);
-    } catch (e) {
-      newsError = String(e);
-    }
+  const items = newsResult.status === "fulfilled" ? newsResult.value : [];
+  const newsError = newsResult.status === "rejected" ? String(newsResult.reason) : undefined;
 
-    let disclosures: Awaited<ReturnType<typeof fetchDartDisclosures>> = [];
-    let dartError: string | undefined;
-    if (dartConfigured && ticker) {
-      try {
-        disclosures = await fetchDartDisclosures({ ticker, corpName: name });
-      } catch (e) {
-        dartError = String(e);
-      }
-    }
+  const disclosures = dartResult.status === "fulfilled" ? dartResult.value : [];
+  const dartError = dartResult.status === "rejected" ? String(dartResult.reason) : undefined;
 
-    return NextResponse.json({
-      items,
-      disclosures,
-      newsSource,
-      dartConfigured,
-      ...(newsError ? { error: newsError } : {}),
-      ...(dartError ? { dartError } : {}),
-    });
-  } catch (e) {
-    return NextResponse.json({ error: String(e), items: [], disclosures: [] }, { status: 500 });
-  }
+  return NextResponse.json({
+    items,
+    disclosures,
+    newsSource: "naver",
+    dartConfigured,
+    ...(newsError ? { error: newsError } : {}),
+    ...(dartError ? { dartError } : {}),
+  });
 }
