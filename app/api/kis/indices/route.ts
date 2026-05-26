@@ -22,7 +22,7 @@ export async function GET() {
   try {
     const [kospi, kosdaq] = await Promise.all([
       fetchIndex("0001", "KOSPI"),
-      fetchIndex("0002", "KOSDAQ"),
+      fetchIndex("1001", "KOSDAQ"),
     ]);
     return NextResponse.json({ kospi, kosdaq });
   } catch (e) {
