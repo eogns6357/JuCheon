@@ -1,5 +1,3 @@
-import { resolveDartCorpCode } from "@/lib/dart-corp-index";
-
 export interface DartDisclosure {
   corpName: string;
   title: string;
@@ -22,23 +20,41 @@ export function isDartConfigured() {
   return Boolean(dartApiKey());
 }
 
-async function dartList(
-  params: Record<string, string>
-): Promise<Record<string, string>[]> {
+// Memory cache: stock code → DART corp_code
+const _corpCodeCache = new Map<string, string>();
+
+async function resolveCorpCode(stockCode: string): Promise<string | null> {
+  const key = dartApiKey();
+  if (!key) return null;
+
+  if (_corpCodeCache.has(stockCode)) return _corpCodeCache.get(stockCode)!;
+
+  try {
+    const res = await fetch(
+      `https://opendart.fss.or.kr/api/company.json?crtfc_key=${key}&stock_code=${stockCode}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!res.ok) return null;
+    const data = await res.json() as { status?: string; corp_code?: string };
+    if (data.status !== "000" || !data.corp_code) return null;
+    _corpCodeCache.set(stockCode, data.corp_code);
+    return data.corp_code;
+  } catch {
+    return null;
+  }
+}
+
+async function dartList(params: Record<string, string>): Promise<Record<string, string>[]> {
   const key = dartApiKey();
   if (!key) return [];
 
-  const qs = new URLSearchParams({ crtfc_key: key, page_count: "30", ...params });
+  const qs = new URLSearchParams({ crtfc_key: key, page_count: "20", ...params });
   const res = await fetch(`https://opendart.fss.or.kr/api/list.json?${qs}`, {
-    next: { revalidate: 300 },
-    signal: AbortSignal.timeout(12000),
+    signal: AbortSignal.timeout(8000),
   });
-  const data = await res.json();
-
-  if (data.status !== "000") {
-    const msg = data.message ?? `status ${data.status}`;
-    throw new Error(`DART: ${msg}`);
-  }
+  if (!res.ok) return [];
+  const data = await res.json() as { status?: string; list?: Record<string, string>[] };
+  if (data.status !== "000") return [];
   return Array.isArray(data.list) ? data.list : [];
 }
 
@@ -64,7 +80,6 @@ function dateRange(days: number) {
   return { bgn_de: fmt(start), end_de: fmt(end) };
 }
 
-/** 종목코드(우선) 또는 회사명으로 최근 공시 조회 */
 export async function fetchDartDisclosures(opts: {
   ticker: string;
   corpName?: string;
@@ -77,23 +92,16 @@ export async function fetchDartDisclosures(opts: {
   const range = dateRange(days);
   const stock = opts.ticker.replace(/\D/g, "").padStart(6, "0").slice(-6);
 
-  try {
-    const corpCode = await resolveDartCorpCode(stock);
-    if (corpCode) {
-      const rows = await dartList({ corp_code: corpCode, ...range });
-      if (rows.length > 0) return mapRows(rows);
-    }
-  } catch {
-    /* corp_code 조회 실패 시 회사명으로 폴백 */
+  // Try corp_code lookup via /api/company.json (fast single call, no ZIP download)
+  const corpCode = await resolveCorpCode(stock);
+  if (corpCode) {
+    const rows = await dartList({ corp_code: corpCode, ...range });
+    if (rows.length > 0) return mapRows(rows);
   }
 
+  // Fallback: search by company name
   const name = opts.corpName?.trim();
   if (!name) return [];
-
-  try {
-    const rows = await dartList({ corp_name: name, ...range });
-    return mapRows(rows);
-  } catch {
-    return [];
-  }
+  const rows = await dartList({ corp_name: name, ...range });
+  return mapRows(rows);
 }
